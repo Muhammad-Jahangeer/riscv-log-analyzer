@@ -34,7 +34,7 @@ report:
 
 # Remove generated output files
 clean:
-	rm -f $(OUTPUT_DIR)/*
+	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.txt
 
 # Show available Makefile targets
 help:
