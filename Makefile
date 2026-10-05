@@ -6,9 +6,8 @@ ANALYZER := ./scripts/analyze.sh
 SETUP := ./scripts/setup_env.sh
 REPORT_GENERATOR := ./scripts/generate_report.sh
 
-LOG_FILE := test_data/sample_sim.log
-PASS_LOG := test_data/sample_pass.log
-FAIL_LOG := test_data/sample_fail.log
+TEST_LOGS := test_data/sample_sim.log test_data/sample_pass.log test_data/sample_fail.log
+REPORT_LOG := test_data/sample_sim.log
 
 OUTPUT_DIR := output
 CSV_REPORT := $(OUTPUT_DIR)/analysis.csv
@@ -16,38 +15,62 @@ FINAL_REPORT := $(OUTPUT_DIR)/final_report.txt
 
 .PHONY: all test report clean help setup
 
-# Run the complete workflow
-# Continue to report even if the sample test has failures
-all:
-	$(MAKE) test || true
-	$(MAKE) report
+# Run all tests and then generate the report
+all: test report
 
-# Analyze the sample simulation log
+# Run the analyzer on every sample log and verify expected results
 test:
-	$(ANALYZER) $(LOG_FILE)
+	@failed=0; \
+	for log in $(TEST_LOGS); do \
+		echo; \
+		echo "=== Testing $$log ==="; \
+		rc=0; \
+		$(ANALYZER) "$$log" > /tmp/riscv_analyzer_test.out 2>&1 || rc=$$?; \
+		cat /tmp/riscv_analyzer_test.out; \
+		case "$$log" in \
+			test_data/sample_sim.log) \
+				expected_total=5; expected_passed=3; expected_failed=1; expected_skipped=1; expected_rc=1 ;; \
+			test_data/sample_pass.log) \
+				expected_total=4; expected_passed=4; expected_failed=0; expected_skipped=0; expected_rc=0 ;; \
+			test_data/sample_fail.log) \
+				expected_total=7; expected_passed=4; expected_failed=2; expected_skipped=1; expected_rc=1 ;; \
+		esac; \
+		if grep -q "Total tests: $$expected_total" /tmp/riscv_analyzer_test.out && \
+		   grep -q "Passed: $$expected_passed" /tmp/riscv_analyzer_test.out && \
+		   grep -q "Failed: $$expected_failed" /tmp/riscv_analyzer_test.out && \
+		   grep -q "Skipped: $$expected_skipped" /tmp/riscv_analyzer_test.out && \
+		   [ "$$rc" -eq "$$expected_rc" ]; then \
+			echo "Verification: PASS"; \
+		else \
+			echo "Verification: FAIL"; \
+			failed=1; \
+		fi; \
+	done; \
+	rm -f /tmp/riscv_analyzer_test.out; \
+	exit $$failed
 
 # Generate CSV and final text report
 report:
 	mkdir -p $(OUTPUT_DIR)
-	$(ANALYZER) $(LOG_FILE) --format csv --output $(CSV_REPORT) || true
+	$(ANALYZER) $(REPORT_LOG) --format csv --output $(CSV_REPORT) || true
 	$(REPORT_GENERATOR) $(CSV_REPORT) $(FINAL_REPORT)
 
-# Remove generated output files
+# Remove generated report files but keep .gitkeep
 clean:
 	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.txt
 
-# Show available Makefile targets
+# Show available targets
 help:
 	@echo "RISC-V Log Analyzer"
 	@echo
 	@echo "Available targets:"
-	@echo "  make all     Run tests and generate report"
-	@echo "  make test    Analyze the sample simulation log"
+	@echo "  make all     Run all tests and generate report"
+	@echo "  make test    Analyze all test logs and verify expected results"
 	@echo "  make report  Generate CSV and text reports"
-	@echo "  make clean   Remove generated output files"
-	@echo "  make help    Show this help message"
+	@echo "  make clean   Remove generated report files"
+	@echo "  make help    Show available Makefile targets"
 	@echo "  make setup   Check required environment commands"
 
-# Check required environment commands
+# Check required tools
 setup:
 	$(SETUP)
