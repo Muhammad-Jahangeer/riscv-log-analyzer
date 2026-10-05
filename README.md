@@ -1,3 +1,3 @@
 # RISC-V Log Analyzer
 
-This project analyzes RISC-V simulation logs and generates reports.
+This project analyzes RISC-V simulation logs and provides detailed test results.
