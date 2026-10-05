@@ -1,0 +1,20 @@
+# Generated output files
+output/*
+
+# Keep the output directory itself
+!output/.gitkeep
+
+# Linux/Windows/macOS files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
