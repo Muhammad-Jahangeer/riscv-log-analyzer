@@ -16,13 +16,17 @@ FINAL_REPORT := $(OUTPUT_DIR)/final_report.txt
 
 .PHONY: all test report clean help setup
 
-all: test report
+# Run the complete workflow
+# Continue to report even if the sample test has failures
+all:
+	$(MAKE) test || true
+	$(MAKE) report
 
-# Run the analyzer on the sample simulation log
+# Analyze the sample simulation log
 test:
 	$(ANALYZER) $(LOG_FILE)
 
-# Generate CSV and final report
+# Generate CSV and final text report
 report:
 	mkdir -p $(OUTPUT_DIR)
 	$(ANALYZER) $(LOG_FILE) --format csv --output $(CSV_REPORT) || true
@@ -44,6 +48,6 @@ help:
 	@echo "  make help    Show this help message"
 	@echo "  make setup   Check required environment commands"
 
-# Check the environment
+# Check required environment commands
 setup:
 	$(SETUP)
