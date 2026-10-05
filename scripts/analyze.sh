@@ -2,13 +2,11 @@
 
 set -euo pipefail
 
-# Default options
 FORMAT="text"
 OUTPUT="/dev/stdout"
 VERBOSE=false
 LOG_FILE=""
 
-# Display help information
 show_help() {
     echo "Usage: $0 <log_file> [options]"
     echo
@@ -19,7 +17,6 @@ show_help() {
     echo "  --help              Show this help message"
 }
 
-# Check whether the log file exists
 check_log_file() {
     if [[ ! -f "$LOG_FILE" ]]; then
         echo "Error: File '$LOG_FILE' not found." >&2
@@ -27,7 +24,6 @@ check_log_file() {
     fi
 }
 
-# Collect test counts
 collect_counts() {
     TOTAL=$(grep -c "TEST \(PASS\|FAIL\|SKIP\):" "$LOG_FILE" || true)
     PASSED=$(grep -c "TEST PASS:" "$LOG_FILE" || true)
@@ -36,63 +32,91 @@ collect_counts() {
 
     if [[ "$TOTAL" -gt 0 ]]; then
         PASS_RATE=$(awk "BEGIN {printf \"%.1f\", ($PASSED / $TOTAL) * 100}")
+        FAIL_RATE=$(awk "BEGIN {printf \"%.1f\", ($FAILED / $TOTAL) * 100}")
+        SKIP_RATE=$(awk "BEGIN {printf \"%.1f\", ($SKIPPED / $TOTAL) * 100}")
     else
         PASS_RATE="0.0"
+        FAIL_RATE="0.0"
+        SKIP_RATE="0.0"
     fi
 }
 
-# Collect timing statistics
 collect_timing() {
-    TIMES=$(grep "TEST \(PASS\|FAIL\):" "$LOG_FILE" | \
-        sed -E 's/.*\(([^)]+)s\).*/\1/' || true)
+    TIMING_DATA=$(grep "TEST \(PASS\|FAIL\):" "$LOG_FILE" || true)
 
-    if [[ -n "$TIMES" ]]; then
-        MIN=$(echo "$TIMES" | sort -n | head -1)
-        MAX=$(echo "$TIMES" | sort -n | tail -1)
-        AVG=$(echo "$TIMES" | awk '{sum += $1} END {printf "%.2f", sum / NR}')
+    if [[ -n "$TIMING_DATA" ]]; then
+        MIN_TIME=$(echo "$TIMING_DATA" | \
+            sed -E 's/.*\(([^)]+)s\).*/\1/' | sort -n | head -1)
+
+        MAX_TIME=$(echo "$TIMING_DATA" | \
+            sed -E 's/.*\(([^)]+)s\).*/\1/' | sort -n | tail -1)
+
+        AVG_TIME=$(echo "$TIMING_DATA" | \
+            sed -E 's/.*\(([^)]+)s\).*/\1/' | \
+            awk '{sum += $1} END {printf "%.2f", sum / NR}')
+
+        MIN_TEST=$(echo "$TIMING_DATA" | \
+            sed -E 's/.*TEST (PASS|FAIL): ([^ ]+) \(([^)]+)s\).*/\2 \3/' | \
+            sort -k2,2n | head -1 | sed -E 's/ ([0-9.]+)$//')
+
+        MAX_TEST=$(echo "$TIMING_DATA" | \
+            sed -E 's/.*TEST (PASS|FAIL): ([^ ]+) \(([^)]+)s\).*/\2 \3/' | \
+            sort -k2,2nr | head -1 | sed -E 's/ ([0-9.]+)$//')
     else
-        MIN="N/A"
-        MAX="N/A"
-        AVG="N/A"
+        MIN_TIME="N/A"
+        MAX_TIME="N/A"
+        AVG_TIME="N/A"
+        MIN_TEST="N/A"
+        MAX_TEST="N/A"
     fi
 }
 
-# Print normal text output
 print_text() {
+    ANALYSIS_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+
     echo "=== RISC-V Simulation Log Analysis ==="
     echo "Log file: $LOG_FILE"
+    echo "Analysis date: $ANALYSIS_DATE"
     echo
 
     echo "--- Results Summary ---"
     echo "Total tests: $TOTAL"
-    echo "Passed: $PASSED"
-    echo "Failed: $FAILED"
-    echo "Skipped: $SKIPPED"
-    echo "Pass rate: ${PASS_RATE}%"
+    echo "Passed: $PASSED (${PASS_RATE}%)"
+    echo "Failed: $FAILED (${FAIL_RATE}%)"
+    echo "Skipped: $SKIPPED (${SKIP_RATE}%)"
 
     echo
-    echo "--- Failing Tests ---"
+    echo "--- Failed Tests ---"
 
     if [[ "$FAILED" -gt 0 ]]; then
         grep "TEST FAIL:" "$LOG_FILE" | \
-            sed 's/.*TEST FAIL: \([^ ]*\).*/\1/'
+            sed 's/.*TEST FAIL: \([^ ]*\).*/\1/' | \
+            awk '{printf "%d. %s\n", NR, $0}'
     else
         echo "None"
     fi
 
     echo
-    echo "--- Execution Time Per Test ---"
+    echo "--- Timing Statistics ---"
 
-    grep "TEST \(PASS\|FAIL\):" "$LOG_FILE" | \
-        sed -E 's/.*TEST (PASS|FAIL): ([^ ]+) \(([^)]+)\).*/\2: \3/'
+    if [[ "$MIN_TIME" != "N/A" ]]; then
+        echo "Min time: ${MIN_TIME}s (${MIN_TEST})"
+        echo "Max time: ${MAX_TIME}s (${MAX_TEST})"
+        echo "Avg time: ${AVG_TIME}s"
+    else
+        echo "Min time: N/A"
+        echo "Max time: N/A"
+        echo "Avg time: N/A"
+    fi
 
     echo
-    echo "--- Execution Time Statistics ---"
-    echo "Minimum: ${MIN}s"
-    echo "Maximum: ${MAX}s"
-    echo "Average: ${AVG}s"
 
-    # Show extra information when verbose mode is enabled
+    if [[ "$FAILED" -gt 0 ]]; then
+        echo "--- Verdict: FAIL ---"
+    else
+        echo "--- Verdict: PASS ---"
+    fi
+
     if [[ "$VERBOSE" == true ]]; then
         echo
         echo "--- Verbose Information ---"
@@ -102,7 +126,6 @@ print_text() {
     fi
 }
 
-# Print CSV output
 print_csv() {
     echo "Type,Test,Status,Time,Value"
 
@@ -111,21 +134,26 @@ print_csv() {
     echo "Summary,,Failed,,${FAILED}"
     echo "Summary,,Skipped,,${SKIPPED}"
     echo "Summary,,Pass Rate,,${PASS_RATE}%"
+    echo "Summary,,Fail Rate,,${FAIL_RATE}%"
+    echo "Summary,,Skip Rate,,${SKIP_RATE}%"
 
-    # Add each test and its execution time
     grep "TEST \(PASS\|FAIL\):" "$LOG_FILE" | \
-        sed -E 's/.*TEST (PASS|FAIL): ([^ ]+) \(([^)]+)s\).*/Test,\2,\1,\3s,/' 
+        sed -E 's/.*TEST (PASS|FAIL): ([^ ]+) \(([^)]+)s\).*/Test,\2,\1,\3s,/' || true
 
-    # Add skipped tests
     grep "TEST SKIP:" "$LOG_FILE" | \
         sed -E 's/.*TEST SKIP: ([^ ]+) \(([^)]+)\).*/Test,\1,SKIP,,/' || true
 
-    echo "Timing,,Minimum,,${MIN}s"
-    echo "Timing,,Maximum,,${MAX}s"
-    echo "Timing,,Average,,${AVG}s"
+    echo "Timing,,Minimum,,${MIN_TIME}s"
+    echo "Timing,,Maximum,,${MAX_TIME}s"
+    echo "Timing,,Average,,${AVG_TIME}s"
+
+    if [[ "$FAILED" -gt 0 ]]; then
+        echo "Verdict,,FAIL,,"
+    else
+        echo "Verdict,,PASS,,"
+    fi
 }
 
-# Parse command-line arguments
 if [[ "$#" -eq 0 ]]; then
     echo "Error: Log file is required." >&2
     echo "Usage: $0 <log_file> [options]"
@@ -186,26 +214,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate log file
 check_log_file
-
-# Collect analysis data
 collect_counts
 collect_timing
 
-# Generate output
 if [[ "$FORMAT" == "text" ]]; then
     print_text > "$OUTPUT"
 else
     print_csv > "$OUTPUT"
 fi
 
-# Verbose information for terminal
 if [[ "$VERBOSE" == true && "$OUTPUT" != "/dev/stdout" ]]; then
     echo "Output written to: $OUTPUT"
 fi
 
-# Return failure status when any test fails
 if [[ "$FAILED" -gt 0 ]]; then
     exit 1
 else
