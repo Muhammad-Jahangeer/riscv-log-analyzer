@@ -6,20 +6,24 @@ FORMAT="text"
 OUTPUT="/dev/stdout"
 VERBOSE=false
 LOG_FILE=""
+COMPARE_MODE=false
+COMPARE_LOG=""
 
 show_help() {
     echo "Usage: $0 <log_file> [options]"
+    echo "       $0 --compare <old_log> <new_log> [options]"
     echo
     echo "Options:"
-    echo "  --format text|csv   Output format (default: text)"
-    echo "  --output <path>     Save output to a file"
-    echo "  --verbose           Show extra information"
-    echo "  --help              Show this help message"
+    echo "  --format text|csv       Output format (default: text)"
+    echo "  --output <path>         Save output to a file"
+    echo "  --verbose               Show extra information"
+    echo "  --compare <new_log>     Compare current log with a newer log"
+    echo "  --help                  Show this help message"
 }
 
 check_log_file() {
-    if [[ ! -f "$LOG_FILE" ]]; then
-        echo "Error: File '$LOG_FILE' not found." >&2
+    if [[ ! -f "$1" ]]; then
+        echo "Error: File '$1' not found." >&2
         exit 1
     fi
 }
@@ -117,9 +121,9 @@ print_text() {
     echo
 
     if [[ "$FAILED" -gt 0 ]]; then
-        echo "--- Verdict: FAIL ---"
+        echo -e "${RED}--- Verdict: FAIL ---${NC}"
     else
-        echo "--- Verdict: PASS ---"
+        echo -e "${GREEN}--- Verdict: PASS ---${NC}"
     fi
 
     if [[ "$VERBOSE" == true ]]; then
@@ -159,6 +163,126 @@ print_csv() {
     fi
 }
 
+compare_logs() {
+    local old_log="$1"
+    local new_log="$2"
+
+    local regression_count=0
+    local improvement_count=0
+    local new_test_count=0
+    local removed_test_count=0
+
+    declare -A OLD_STATUS=()
+    declare -A NEW_STATUS=()
+
+    while read -r status test_name; do
+        [[ -n "$test_name" ]] && OLD_STATUS["$test_name"]="$status"
+    done < <(
+        grep "TEST \(PASS\|FAIL\|SKIP\):" "$old_log" | \
+            sed -E 's/.*TEST (PASS|FAIL|SKIP): ([^ ]+).*/\1 \2/' || true
+    )
+
+    while read -r status test_name; do
+        [[ -n "$test_name" ]] && NEW_STATUS["$test_name"]="$status"
+    done < <(
+        grep "TEST \(PASS\|FAIL\|SKIP\):" "$new_log" | \
+            sed -E 's/.*TEST (PASS|FAIL|SKIP): ([^ ]+).*/\1 \2/' || true
+    )
+
+    {
+        echo "=== RISC-V Simulation Log Comparison ==="
+        echo "Before: $old_log"
+        echo "After:  $new_log"
+        echo
+
+        echo "--- Regressions (PASS -> FAIL) ---"
+
+        for test_name in "${!OLD_STATUS[@]}"; do
+            old_status="${OLD_STATUS[$test_name]}"
+            new_status="${NEW_STATUS[$test_name]:-MISSING}"
+
+            if [[ "$old_status" == "PASS" && "$new_status" == "FAIL" ]]; then
+                echo -e "${RED}REGRESSION: $test_name (PASS -> FAIL)${NC}"
+                regression_count=$((regression_count + 1))
+            fi
+        done
+
+        if [[ "$regression_count" -eq 0 ]]; then
+            echo "None"
+        fi
+
+        echo
+        echo "--- Improvements (FAIL -> PASS) ---"
+
+        for test_name in "${!OLD_STATUS[@]}"; do
+            old_status="${OLD_STATUS[$test_name]}"
+            new_status="${NEW_STATUS[$test_name]:-MISSING}"
+
+            if [[ "$old_status" == "FAIL" && "$new_status" == "PASS" ]]; then
+                echo -e "${GREEN}IMPROVEMENT: $test_name (FAIL -> PASS)${NC}"
+                improvement_count=$((improvement_count + 1))
+            fi
+        done
+
+        if [[ "$improvement_count" -eq 0 ]]; then
+            echo "None"
+        fi
+
+        echo
+        echo "--- New Tests ---"
+
+        for test_name in "${!NEW_STATUS[@]}"; do
+            if [[ -z "${OLD_STATUS[$test_name]+exists}" ]]; then
+                echo "NEW: $test_name (${NEW_STATUS[$test_name]})"
+                new_test_count=$((new_test_count + 1))
+            fi
+        done
+
+        if [[ "$new_test_count" -eq 0 ]]; then
+            echo "None"
+        fi
+
+        echo
+        echo "--- Removed Tests ---"
+
+        for test_name in "${!OLD_STATUS[@]}"; do
+            if [[ -z "${NEW_STATUS[$test_name]+exists}" ]]; then
+                echo "REMOVED: $test_name (${OLD_STATUS[$test_name]})"
+                removed_test_count=$((removed_test_count + 1))
+            fi
+        done
+
+        if [[ "$removed_test_count" -eq 0 ]]; then
+            echo "None"
+        fi
+
+        echo
+        echo "--- Comparison Summary ---"
+        echo "Regressions: $regression_count"
+        echo "Improvements: $improvement_count"
+        echo "New tests: $new_test_count"
+        echo "Removed tests: $removed_test_count"
+
+        echo
+
+        if [[ "$regression_count" -gt 0 ]]; then
+            echo -e "${RED}Comparison Result: REGRESSION DETECTED${NC}"
+        else
+            echo -e "${GREEN}Comparison Result: NO REGRESSIONS${NC}"
+        fi
+    } > "$OUTPUT"
+
+    if [[ "$VERBOSE" == true && "$OUTPUT" != "/dev/stdout" ]]; then
+        echo "Output written to: $OUTPUT"
+    fi
+
+    if [[ "$regression_count" -gt 0 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
 if [[ "$#" -eq 0 ]]; then
     echo "Error: Log file is required." >&2
     echo "Usage: $0 <log_file> [options]"
@@ -170,8 +294,22 @@ if [[ "${1:-}" == "--help" ]]; then
     exit 0
 fi
 
-LOG_FILE="$1"
-shift
+# Support: ./analyze.sh --compare old.log new.log
+if [[ "${1:-}" == "--compare" ]]; then
+    if [[ "$#" -lt 3 ]]; then
+        echo "Error: --compare requires two log files." >&2
+        echo "Usage: $0 --compare <old_log> <new_log> [options]"
+        exit 1
+    fi
+
+    COMPARE_MODE=true
+    LOG_FILE="$2"
+    COMPARE_LOG="$3"
+    shift 3
+else
+    LOG_FILE="$1"
+    shift
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -206,6 +344,17 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
 
+        --compare)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --compare requires a new log file." >&2
+                exit 1
+            fi
+
+            COMPARE_MODE=true
+            COMPARE_LOG="$2"
+            shift 2
+            ;;
+
         --help)
             show_help
             exit 0
@@ -219,7 +368,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-check_log_file
+if [[ "$COMPARE_MODE" == true ]]; then
+    check_log_file "$LOG_FILE"
+    check_log_file "$COMPARE_LOG"
+
+    if [[ "$FORMAT" != "text" ]]; then
+        echo "Error: --compare currently supports text output only." >&2
+        exit 1
+    fi
+
+    compare_logs "$LOG_FILE" "$COMPARE_LOG"
+    exit $?
+fi
+
+check_log_file "$LOG_FILE"
 collect_counts
 collect_timing
 
