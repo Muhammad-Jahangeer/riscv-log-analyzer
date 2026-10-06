@@ -71,6 +71,11 @@ collect_timing() {
     fi
 }
 
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
 print_text() {
     ANALYSIS_DATE=$(date '+%Y-%m-%d %H:%M:%S')
 
@@ -81,9 +86,9 @@ print_text() {
 
     echo "--- Results Summary ---"
     echo "Total tests: $TOTAL"
-    echo "Passed: $PASSED (${PASS_RATE}%)"
-    echo "Failed: $FAILED (${FAIL_RATE}%)"
-    echo "Skipped: $SKIPPED (${SKIP_RATE}%)"
+    echo -e "${GREEN}Passed: $PASSED (${PASS_RATE}%)${NC}"
+    echo -e "${RED}Failed: $FAILED (${FAIL_RATE}%)${NC}"
+    echo -e "${YELLOW}Skipped: $SKIPPED (${SKIP_RATE}%)${NC}"
 
     echo
     echo "--- Failed Tests ---"
