@@ -11,11 +11,12 @@ REPORT_LOG := test_data/sample_sim.log
 
 OUTPUT_DIR := output
 CSV_REPORT := $(OUTPUT_DIR)/analysis.csv
-FINAL_REPORT := $(OUTPUT_DIR)/final_report.txt
+TEXT_REPORT := $(OUTPUT_DIR)/final_report.txt
+HTML_REPORT := $(OUTPUT_DIR)/final_report.html
 
 .PHONY: all test report clean help setup
 
-# Run all tests and then generate the report
+# Run all tests and then generate the reports
 all: test report
 
 # Run the analyzer on every sample log and verify expected results
@@ -49,24 +50,25 @@ test:
 	rm -f /tmp/riscv_analyzer_test.out; \
 	exit $$failed
 
-# Generate CSV and final text report
+# Generate CSV, text, and HTML reports
 report:
 	mkdir -p $(OUTPUT_DIR)
 	$(ANALYZER) $(REPORT_LOG) --format csv --output $(CSV_REPORT) || true
-	$(REPORT_GENERATOR) $(CSV_REPORT) $(FINAL_REPORT)
+	$(ANALYZER) $(REPORT_LOG) --format text --output $(TEXT_REPORT) || true
+	$(REPORT_GENERATOR) $(CSV_REPORT) $(HTML_REPORT)
 
 # Remove generated report files but keep .gitkeep
 clean:
-	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.txt
+	rm -f $(OUTPUT_DIR)/*.csv $(OUTPUT_DIR)/*.txt $(OUTPUT_DIR)/*.html
 
 # Show available targets
 help:
 	@echo "RISC-V Log Analyzer"
 	@echo
 	@echo "Available targets:"
-	@echo "  make all     Run all tests and generate report"
+	@echo "  make all     Run all tests and generate reports"
 	@echo "  make test    Analyze all test logs and verify expected results"
-	@echo "  make report  Generate CSV and text reports"
+	@echo "  make report  Generate CSV, text, and HTML reports"
 	@echo "  make clean   Remove generated report files"
 	@echo "  make help    Show available Makefile targets"
 	@echo "  make setup   Check required environment commands"
