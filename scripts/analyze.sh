@@ -17,7 +17,7 @@ show_help() {
     echo "  --format text|csv       Output format (default: text)"
     echo "  --output <path>         Save output to a file"
     echo "  --verbose               Show extra information"
-    echo "  --compare <new_log>     Compare current log with a newer log"
+    echo "  --compare <old> <new>   Compare two log files"
     echo "  --help                  Show this help message"
 }
 
@@ -283,92 +283,178 @@ compare_logs() {
     return 0
 }
 
-if [[ "$#" -eq 0 ]]; then
-    echo "Error: Log file is required." >&2
-    echo "Usage: $0 <log_file> [options]"
-    exit 1
-fi
-
-if [[ "${1:-}" == "--help" ]]; then
-    show_help
-    exit 0
-fi
-
-# Support: ./analyze.sh --compare old.log new.log
-if [[ "${1:-}" == "--compare" ]]; then
-    if [[ "$#" -lt 3 ]]; then
-        echo "Error: --compare requires two log files." >&2
-        echo "Usage: $0 --compare <old_log> <new_log> [options]"
-        exit 1
-    fi
-
-    COMPARE_MODE=true
-    LOG_FILE="$2"
-    COMPARE_LOG="$3"
-    shift 3
-else
-    LOG_FILE="$1"
-    shift
-fi
+# Convert long options to short options.
+# The actual option parsing is performed by Bash getopts.
+OPTIONS=()
+POSITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --format)
-            if [[ $# -lt 2 ]]; then
+            [[ $# -ge 2 ]] || {
                 echo "Error: --format requires text or csv." >&2
                 exit 1
-            fi
-
-            FORMAT="$2"
-
-            if [[ "$FORMAT" != "text" && "$FORMAT" != "csv" ]]; then
-                echo "Error: Format must be 'text' or 'csv'." >&2
-                exit 1
-            fi
-
+            }
+            OPTIONS+=("-f" "$2")
             shift 2
+            ;;
+
+        --format=*)
+            OPTIONS+=("-f" "${1#*=}")
+            shift
             ;;
 
         --output)
-            if [[ $# -lt 2 ]]; then
+            [[ $# -ge 2 ]] || {
                 echo "Error: --output requires a file path." >&2
                 exit 1
-            fi
-
-            OUTPUT="$2"
+            }
+            OPTIONS+=("-o" "$2")
             shift 2
             ;;
 
+        --output=*)
+            OPTIONS+=("-o" "${1#*=}")
+            shift
+            ;;
+
         --verbose)
-            VERBOSE=true
+            OPTIONS+=("-v")
+            shift
+            ;;
+
+        --help)
+            OPTIONS+=("-h")
             shift
             ;;
 
         --compare)
-            if [[ $# -lt 2 ]]; then
-                echo "Error: --compare requires a new log file." >&2
+            [[ $# -ge 3 ]] || {
+                echo "Error: --compare requires two log files." >&2
+                echo "Usage: $0 --compare <old_log> <new_log> [options]"
                 exit 1
-            fi
+            }
+            OPTIONS+=("-c")
+            POSITIONAL_ARGS+=("$2" "$3")
+            shift 3
+            ;;
 
-            COMPARE_MODE=true
-            COMPARE_LOG="$2"
+        -f)
+            [[ $# -ge 2 ]] || {
+                echo "Error: -f requires a value." >&2
+                exit 1
+            }
+            OPTIONS+=("-f" "$2")
             shift 2
             ;;
 
-        --help)
+        -o)
+            [[ $# -ge 2 ]] || {
+                echo "Error: -o requires a value." >&2
+                exit 1
+            }
+            OPTIONS+=("-o" "$2")
+            shift 2
+            ;;
+
+        -v)
+            OPTIONS+=("-v")
+            shift
+            ;;
+
+        -h)
+            OPTIONS+=("-h")
+            shift
+            ;;
+
+        -c)
+            [[ $# -ge 3 ]] || {
+                echo "Error: -c requires two log files." >&2
+                exit 1
+            }
+            OPTIONS+=("-c")
+            POSITIONAL_ARGS+=("$2" "$3")
+            shift 3
+            ;;
+
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do
+                POSITIONAL_ARGS+=("$1")
+                shift
+            done
+            ;;
+
+        -*)
+            echo "Error: Unknown option '$1'." >&2
+            echo "Use --help for usage information."
+            exit 1
+            ;;
+
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${OPTIONS[@]}" "${POSITIONAL_ARGS[@]}"
+
+OPTIND=1
+
+while getopts ":f:o:vhc" opt; do
+    case "$opt" in
+        f)
+            FORMAT="$OPTARG"
+            ;;
+
+        o)
+            OUTPUT="$OPTARG"
+            ;;
+
+        v)
+            VERBOSE=true
+            ;;
+
+        h)
             show_help
             exit 0
             ;;
 
-        *)
-            echo "Error: Unknown option '$1'." >&2
+        c)
+            COMPARE_MODE=true
+            ;;
+
+        :)
+            echo "Error: Option '-$OPTARG' requires an argument." >&2
+            exit 1
+            ;;
+
+        \?)
+            echo "Error: Invalid option '-$OPTARG'." >&2
             echo "Use --help for usage information."
             exit 1
             ;;
     esac
 done
 
+shift $((OPTIND - 1))
+
+if [[ "$FORMAT" != "text" && "$FORMAT" != "csv" ]]; then
+    echo "Error: Format must be 'text' or 'csv'." >&2
+    exit 1
+fi
+
 if [[ "$COMPARE_MODE" == true ]]; then
+    if [[ "$#" -ne 2 ]]; then
+        echo "Error: --compare requires two log files." >&2
+        echo "Usage: $0 --compare <old_log> <new_log> [options]"
+        exit 1
+    fi
+
+    LOG_FILE="$1"
+    COMPARE_LOG="$2"
+
     check_log_file "$LOG_FILE"
     check_log_file "$COMPARE_LOG"
 
@@ -380,6 +466,14 @@ if [[ "$COMPARE_MODE" == true ]]; then
     compare_logs "$LOG_FILE" "$COMPARE_LOG"
     exit $?
 fi
+
+if [[ "$#" -ne 1 ]]; then
+    echo "Error: Log file is required." >&2
+    echo "Usage: $0 <log_file> [options]"
+    exit 1
+fi
+
+LOG_FILE="$1"
 
 check_log_file "$LOG_FILE"
 collect_counts
